@@ -1,0 +1,74 @@
+---
+- name: Installation de Zabbix automatique
+  hosts: dev
+  become: yes
+  tasks:
+    - name: Telechargement du repository Zabbix
+      ansible.builtin.get_url:
+        url: https://repo.zabbix.com/zabbix/6.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.4-1+ubuntu20.04_all.deb
+        dest: /home/ensitech/
+
+    - name: Installer le paquet avec dpkg
+      become: yes
+      command: dpkg -i /home/ensitech/zabbix-release_6.4-1+ubuntu20.04_all.deb
+
+    - name: Met à jour les paquets
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Installation de plusieurs paquets
+      ansible.builtin.apt:
+        pkg:
+        - zabbix-server-mysql
+        - zabbix-frontend-php
+        - zabbix-apache-conf
+        - zabbix-sql-scripts
+        - zabbix-agent
+        - mysql-server
+        - python
+        - python3-pip
+
+    - name: Installer mysqlclient
+      apt:
+        name: python3-mysqldb
+        state: present
+
+    - name: Création de la base de données
+      mysql_db:
+        name: zabbix
+        state: present
+        collation: utf8mb4_bin
+
+    - name: Création de l'utilisateur zabbix avec les privileges pour zabbix
+      community.mysql.mysql_user:
+        state: present
+        name: zabbix
+        password: zabbix
+        priv:
+          'zabbix.*': 'ALL,GRANT'
+
+    - name: Set global à 1
+      community.mysql.mysql_query:
+        query: set global log_bin_trust_function_creators = 1;
+        login_unix_socket: /run/mysqld/mysqld.sock
+
+    - name: Importer le schema
+      become: yes
+      shell: zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql --default-character-set=utf8mb4 -uzabbix -pzabbix zabbix
+
+    - name: Set global à 0
+      community.mysql.mysql_query:
+        query: set global log_bin_trust_function_creators = 0;
+        login_unix_socket: /run/mysqld/mysqld.sock
+
+    - name: Ajouter la ligne DBPassword avec le mot de passe de la conf
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_server.conf
+        line: DBPassword=zabbix
+        create: yes
+
+    - name: Redémarrer les services zabbix server / agent et apache 2
+      command: systemctl restart zabbix-server zabbix-agent apache2
+
+    - name: Activer zabbix server / agent et apache 2
+      command: systemctl enable zabbix-server zabbix-agent apache2
